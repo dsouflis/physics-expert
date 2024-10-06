@@ -5,6 +5,7 @@ import {
   ChatCompletionUserMessageParam,
   ChatCompletionTool,
   ChatCompletionCreateParamsNonStreaming,
+  ChatCompletionMessageToolCall,
 } from "openai/resources";
 import { World } from 'planck';
 
@@ -24,10 +25,13 @@ const physicsExpertSystemPrompt =
 4) the constraints that each object obeys
 5) the constraints that link objects with one another
 
-There can be a static ground. There can be two other kinds of objects: circles and rectangles. They both have a mass. They can be free or static.`;
+There can be a static ground. There can be two other kinds of objects: circles and rectangles. They both have a mass. They can be free or static.
+
+Respond with a rationale, and then the configuration for the objects in a plaintext block.
+`;
 
 const toolUserExpertSystemPrompt =
-  `You are an assistant to a user of a 2D Physics Engine. You must help the user create an object based on its description.  Use the supplied tools to assist the user.`;
+  `You are an assistant to a user of a 2D Physics Engine. You must help the user create objects based on their description.  Use the supplied tools to assist the user.`;
 
 
 const tools: ChatCompletionTool[] = [
@@ -39,42 +43,102 @@ const tools: ChatCompletionTool[] = [
       parameters: {
         type: 'object',
         properties: {
+          static: {
+            type: 'boolean',
+            description: 'If the object is static or free',
+          },
           mass: {
-            mass: 'number',
+            type: 'number',
             description: 'The mass of the circle',
           },
           radius: {
-            mass: 'number',
+            type: 'number',
             description: 'The radius of the circle',
           },
           initial_position_x: {
-            mass: 'number',
+            type: 'number',
             description: 'The initial position of the circle in the X axis',
           },
           initial_position_y: {
-            mass: 'number',
+            type: 'number',
             description: 'The initial position of the circle in the Y axis',
           },
           initial_velocity_x: {
-            mass: 'number',
+            type: 'number',
             description: 'The initial velocity of the circle in the X axis',
           },
           initial_velocity_y: {
-            mass: 'number',
+            type: 'number',
             description: 'The initial velocity of the circle in the Y axis',
           },
           initial_angular_velocity: {
-            mass: 'number',
+            type: 'number',
             description: 'The initial angular velocity of the circle',
           },
         },
       },
     },
-  }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'create_rectangle',
+      description: 'Create a rectangle in the Physics Engine',
+      parameters: {
+        type: 'object',
+        properties: {
+          static: {
+            type: 'boolean',
+            description: 'If the object is static or free',
+          },
+          mass: {
+            type: 'number',
+            description: 'The mass of the object',
+          },
+          radius: {
+            type: 'number',
+            description: 'The radius of the object',
+          },
+          initial_position_x: {
+            type: 'number',
+            description: 'The initial position of the object in the X axis',
+          },
+          initial_position_y: {
+            type: 'number',
+            description: 'The initial position of the object in the Y axis',
+          },
+          width: {
+            type: 'number',
+            description: 'The width of the object',
+          },
+          height: {
+            type: 'number',
+            description: 'The height of the object',
+          },
+          initial_orientation: {
+            type: 'number',
+            description: 'The initial orientation of the object with respect to the X axis',
+          },
+          initial_velocity_x: {
+            type: 'number',
+            description: 'The initial velocity of the object in the X axis',
+          },
+          initial_velocity_y: {
+            type: 'number',
+            description: 'The initial velocity of the object in the Y axis',
+          },
+          initial_angular_velocity: {
+            type: 'number',
+            description: 'The initial angular velocity of the object',
+          },
+        },
+      },
+    },
+  },
 ];
 
 interface HistoryItem {
-  item: ChatCompletionMessageParam,
+  item: ChatCompletionMessageParam & { content: string},
   tokens: number,
 }
 
@@ -106,7 +170,7 @@ async function getOpenAiResponse(system: string, user: string, contextLength: nu
     content: system,
   }];
   let contextOfLength = createContextOfLength(contextLength);
-  console.log(`Context of length ${contextLength}`, contextOfLength);
+  // console.log(`Context of length ${contextLength}`, contextOfLength);
   if(contextOfLength.length) {
     messages = [...messages, ...contextOfLength];
   }
@@ -115,7 +179,7 @@ async function getOpenAiResponse(system: string, user: string, contextLength: nu
     content: user
   };
   messages.push(userMessage);
-  console.log('Messages', messages);
+  // console.log('Messages', messages);
   let body:  ChatCompletionCreateParamsNonStreaming = {
     model: 'gpt-4o-mini',
     messages,
@@ -127,6 +191,76 @@ async function getOpenAiResponse(system: string, user: string, contextLength: nu
   return response;
 }
 
+function plaintextExtractor(s: string): string | null {
+  let lines= s.split('\n');
+  let plaintext = null;
+  let parsing = false;
+  for (const line of lines) {
+    const trimmedLine = line.trim();
+    if(!parsing && line.startsWith('```')) {
+      plaintext = '';
+      parsing = true;
+    } else if(parsing) {
+      if(line.startsWith('```')) {
+        parsing = false;
+      } else {
+        plaintext += line + '\n';
+      }
+    }
+  }
+  plaintext = plaintext?.trim();
+  return plaintext === ''? null : plaintext ;
+}
+
+function parseObjects(lastConfiguration: string) {
+  let lines = lastConfiguration.split('\n');
+  const objects: { description: string }[] = [{ description: ''}];
+  for (const line of lines) {
+    if (line.length === 0) {
+      objects.push({
+        description: '',
+      });
+    } else {
+      objects[objects.length - 1].description += line + '\n';
+    }
+  }
+
+  return objects;
+}
+
+function runTool(toolCall: ChatCompletionMessageToolCall) {
+  switch (toolCall.function.name) {
+    case 'create_rectangle': {
+      console.log(JSON.stringify(toolCall));
+    } break;
+    case 'create_circle': {
+      console.log(JSON.stringify(toolCall));
+    } break;
+    default: console.error(`Unknown function ${toolCall.function.name}`);
+  }
+}
+
+async function runSimulation() {
+  let lastConfiguration = history[0].item.content;
+  const plaintext = plaintextExtractor(lastConfiguration);
+  if (plaintext) {
+    let completion = await getOpenAiResponse(toolUserExpertSystemPrompt, plaintext, 0, tools);
+    console.log(completion);
+    if(completion.choices[0].finish_reason === 'tool_calls') {
+      let toolCalls = completion.choices[0].message.tool_calls;
+      for (const toolCall of toolCalls) {
+        runTool(toolCall);
+      }
+    }
+    // let objects = parseObjects(plaintext);
+    // console.log(objects);
+    // for (const object of objects) {
+    //   let completion = await getOpenAiResponse(toolUserExpertSystemPrompt, object.description, 0, tools);
+    //   console.log(completion);
+    // }
+  }
+}
+
 async function run() {
   console.log('Welcome to the experimental ChatGPT-Powered Physics Engine');
   let contextLength = 0;
@@ -135,9 +269,10 @@ async function run() {
       const userPrompt = await input({message: '>'});
       if (userPrompt.toLowerCase() === 'bye' || userPrompt.toLowerCase() === 'exit') break;
       let classifierResponse = await getOpenAiResponse(classifierSystemPrompt, userPrompt, 0);
-      console.log('Classifier responded:', classifierResponse.choices[0].message.content);
+      // console.log('Classifier responded:', classifierResponse.choices[0].message.content);
       if(classifierResponse.choices[0].message.content === 'READY') {
         console.log('.... use 3rd expert to create objects');
+        await runSimulation();
         continue;
       } //else 'CONTINUE'
       let response = await getOpenAiResponse(physicsExpertSystemPrompt, userPrompt, contextLength);
@@ -146,15 +281,20 @@ async function run() {
         role: 'user',
         content: userPrompt
       };
+
+      let assistantMessage: ChatCompletionMessageParam = {
+        role: 'assistant',
+        content: response.choices[0].message.content?.toString(),
+      };
       history = [
         {
-          item: response.choices[0].message,
+          item: assistantMessage,
           tokens: response.usage?.completion_tokens || 0,
-        },
+        } as HistoryItem,
         {
           item: userMessage,
           tokens: response.usage?.prompt_tokens || 0,
-        },
+        } as HistoryItem,
         ...history,
       ];
       contextLength++;
