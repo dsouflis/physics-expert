@@ -1,0 +1,21 @@
+@startuml
+[*] -[#green]-> Inquired: Ask user.
+Inquired: User request
+Inquired -[#red]-> Classified: Ask classifier
+Classified: CONTINUE / READY
+Classified -[#blue]-> Examined: On CONTINUE:\nAsk Physics expert
+Examined: Physics configuration
+Examined -[#green]-> Inquired: Ask user.
+Classified -[#yellow]-> ToolExpert: On READY:\nAsk Tool expert
+ToolExpert: Tool calls
+ToolExpert -[#green]-> ObjectsCreated: execute tool calls
+ObjectsCreated: Planck.js objects\ncreated
+ObjectsCreated --> [*]
+@enduml
+
+legend top left
+<font color=green>Green:</font> Local operation
+<font color=red>Red:</font> Classifier
+<font color=blue>Blue:</font> Physics expert
+<font color=yellow>Yellow:</font> Tools expert
+endlegend

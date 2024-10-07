@@ -1,13 +1,13 @@
-import { input, confirm  } from '@inquirer/prompts';
+import {input} from '@inquirer/prompts';
 import {OpenAI} from 'openai';
 import {
-  ChatCompletionMessageParam,
-  ChatCompletionUserMessageParam,
-  ChatCompletionTool,
   ChatCompletionCreateParamsNonStreaming,
+  ChatCompletionMessageParam,
   ChatCompletionMessageToolCall,
+  ChatCompletionTool,
+  ChatCompletionUserMessageParam,
 } from "openai/resources";
-import { World } from 'planck';
+import {BodyDef, Circle, Polygon, Vec2, World} from 'planck';
 
 const world = new World();
 const openai = new OpenAI();
@@ -25,7 +25,7 @@ const physicsExpertSystemPrompt =
 4) the constraints that each object obeys
 5) the constraints that link objects with one another
 
-There can be a static ground. There can be two other kinds of objects: circles and rectangles. They both have a mass. They can be free or static.
+There can be a static ground. There can be two other kinds of objects: circles and rectangles. They both have a mass. They can be free or immovable.
 
 Respond with a rationale, and then the configuration for the objects in a plaintext block.
 `;
@@ -33,6 +33,25 @@ Respond with a rationale, and then the configuration for the objects in a plaint
 const toolUserExpertSystemPrompt =
   `You are an assistant to a user of a 2D Physics Engine. You must help the user create objects based on their description.  Use the supplied tools to assist the user.`;
 
+interface BasicObjectDef {
+  name: string,
+  immovable: boolean,
+  mass: number,
+  initial_position_x: number,
+  initial_position_y: number,
+  initial_velocity_x: number,
+  initial_velocity_y: number,
+  initial_angular_velocity: number,
+}
+
+interface CircleDef extends BasicObjectDef {
+  radius: number,
+}
+
+interface RectangleDef extends BasicObjectDef {
+  width: number,
+  height: number,
+}
 
 const tools: ChatCompletionTool[] = [
   {
@@ -43,9 +62,13 @@ const tools: ChatCompletionTool[] = [
       parameters: {
         type: 'object',
         properties: {
-          static: {
+          name: {
+            type: 'string',
+            description: 'The name of the object',
+          },
+          immovable: {
             type: 'boolean',
-            description: 'If the object is static or free',
+            description: 'If the object is immovable or free',
           },
           mass: {
             type: 'number',
@@ -87,9 +110,13 @@ const tools: ChatCompletionTool[] = [
       parameters: {
         type: 'object',
         properties: {
-          static: {
+          name: {
+            type: 'string',
+            description: 'The name of the object',
+          },
+          immovable: {
             type: 'boolean',
-            description: 'If the object is static or free',
+            description: 'If the object is immovable or free',
           },
           mass: {
             type: 'number',
@@ -229,12 +256,56 @@ function parseObjects(lastConfiguration: string) {
 }
 
 function runTool(toolCall: ChatCompletionMessageToolCall) {
+  let functionArgs = JSON.parse(toolCall.function.arguments);
   switch (toolCall.function.name) {
     case 'create_rectangle': {
-      console.log(JSON.stringify(toolCall));
+      const args: RectangleDef = functionArgs;
+      const position = Vec2(
+        args.initial_position_x,
+        args.initial_position_y,
+      );
+      const center = Vec2(0, 0);
+      const rectangle = new Polygon([
+        Vec2(-args.width/2, args.height/2),
+        Vec2(-args.width/2, -args.height/2),
+        Vec2(args.width/2, -args.height/2),
+        Vec2(args.width/2, args.height/2),
+      ]);
+
+      let bodyDef: BodyDef = {
+        type: 'dynamic',
+        position,
+      };
+      let body = world.createBody(bodyDef);
+      let fixture = body.createFixture(rectangle);
+      let massData = {mass: args.mass, center, I: 0};
+      body.setMassData(massData);
+      console.log('create_rectangle', args);
+      console.log('shape=', rectangle);
+      console.log('body=', bodyDef);
+      console.log('massData=', massData);
     } break;
     case 'create_circle': {
-      console.log(JSON.stringify(toolCall));
+      const args: CircleDef = functionArgs;
+      const position = Vec2(
+        args.initial_position_x,
+        args.initial_position_y,
+      );
+      const center = Vec2(0, 0);
+      const circle = new Circle(center, args.radius);
+
+      let bodyDef: BodyDef = {
+        type: 'dynamic',
+        position,
+      };
+      let body = world.createBody(bodyDef);
+      let fixture = body.createFixture(circle);
+      let massData = {mass: args.mass, center, I: 0};
+      body.setMassData(massData);
+      console.log('create_circle', args);
+      console.log('shape=', circle);
+      console.log('body=', bodyDef);
+      console.log('massData=', massData);
     } break;
     default: console.error(`Unknown function ${toolCall.function.name}`);
   }
@@ -245,7 +316,7 @@ async function runSimulation() {
   const plaintext = plaintextExtractor(lastConfiguration);
   if (plaintext) {
     let completion = await getOpenAiResponse(toolUserExpertSystemPrompt, plaintext, 0, tools);
-    console.log(completion);
+    // console.log(completion);
     if(completion.choices[0].finish_reason === 'tool_calls') {
       let toolCalls = completion.choices[0].message.tool_calls;
       for (const toolCall of toolCalls) {
@@ -254,10 +325,6 @@ async function runSimulation() {
     }
     // let objects = parseObjects(plaintext);
     // console.log(objects);
-    // for (const object of objects) {
-    //   let completion = await getOpenAiResponse(toolUserExpertSystemPrompt, object.description, 0, tools);
-    //   console.log(completion);
-    // }
   }
 }
 
