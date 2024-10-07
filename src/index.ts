@@ -239,22 +239,6 @@ function plaintextExtractor(s: string): string | null {
   return plaintext === ''? null : plaintext ;
 }
 
-function parseObjects(lastConfiguration: string) {
-  let lines = lastConfiguration.split('\n');
-  const objects: { description: string }[] = [{ description: ''}];
-  for (const line of lines) {
-    if (line.length === 0) {
-      objects.push({
-        description: '',
-      });
-    } else {
-      objects[objects.length - 1].description += line + '\n';
-    }
-  }
-
-  return objects;
-}
-
 function runTool(toolCall: ChatCompletionMessageToolCall) {
   let functionArgs = JSON.parse(toolCall.function.arguments);
   switch (toolCall.function.name) {
@@ -316,15 +300,12 @@ async function runSimulation() {
   const plaintext = plaintextExtractor(lastConfiguration);
   if (plaintext) {
     let completion = await getOpenAiResponse(toolUserExpertSystemPrompt, plaintext, 0, tools);
-    // console.log(completion);
     if(completion.choices[0].finish_reason === 'tool_calls') {
       let toolCalls = completion.choices[0].message.tool_calls;
       for (const toolCall of toolCalls) {
         runTool(toolCall);
       }
     }
-    // let objects = parseObjects(plaintext);
-    // console.log(objects);
   }
 }
 
